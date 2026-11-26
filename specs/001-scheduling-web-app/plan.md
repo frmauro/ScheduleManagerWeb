@@ -34,7 +34,7 @@ A abordagem técnica (ver [research.md](./research.md)):
 
 **Project Type**: aplicação web (SPA front-end) consumindo API REST existente (sem backend novo).
 
-**Performance Goals**: conteúdo ou skeleton em ≤ 1 s e troca de página de lista em ≤ 2 s (SC-008); bundle inicial ≤ 300 kB gzip, com cada área *lazy* ≤ 150 kB gzip (orçamentos em `angular.json`, que fazem `ng build` falhar com aviso/erro); LCP ≤ 2,5 s em 4G na vitrine e na reserva.
+**Performance Goals**: conteúdo ou skeleton em ≤ 1 s e troca de página de lista em ≤ 2 s (SC-008); bundle inicial ≤ 300 kB gzip, com cada área *lazy* ≤ 150 kB gzip. Como os orçamentos do Angular medem o tamanho **sem compressão**, o `angular.json` usa limites brutos mais rígidos que a meta em gzip (achado I3, 2026-11-26): `initial` aviso 500 kB / erro 600 kB e `anyScript` aviso 400 kB / erro 500 kB (≈ 3,5–4× o gzip); o tamanho real transferido aparece em "Estimated transfer size" no `ng build` e é conferido na T166; LCP ≤ 2,5 s em 4G na vitrine e na reserva.
 
 **Constraints**:
 - nenhuma operação, campo ou enum fora do contrato (FR-001); a API não é alterada;

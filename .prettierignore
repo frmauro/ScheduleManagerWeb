@@ -1,0 +1,12 @@
+dist/
+.angular/
+coverage/
+node_modules/
+test-results/
+playwright-report/
+package-lock.json
+src/app/core/api/schema.gen.ts
+.specify/
+.claude/
+specs/
+prompt-frontend.md

@@ -1,0 +1,36 @@
+/** URLs públicas da aplicação (contracts/routes.md). Fonte única para links e redirecionamentos. */
+export const APP_PATHS = {
+  home: '/',
+  provider: (providerId: string) => `/prestadores/${providerId}`,
+  booking: (providerId: string) => `/prestadores/${providerId}/agendar`,
+  login: '/entrar',
+  registerCustomer: '/cadastro',
+  registerProvider: '/cadastro/prestador',
+  forbidden: '/sem-permissao',
+  unexpectedError: '/erro',
+  customer: {
+    appointments: '/cliente/agendamentos',
+    appointment: (id: string) => `/cliente/agendamentos/${id}`,
+    profile: '/cliente/perfil',
+    notifications: '/cliente/notificacoes',
+  },
+  providerArea: {
+    home: '/prestador',
+    setup: '/prestador/primeiros-passos',
+    agenda: '/prestador/agenda',
+    appointment: (id: string) => `/prestador/agendamentos/${id}`,
+    services: '/prestador/servicos',
+    schedule: '/prestador/expediente',
+    exceptions: '/prestador/excecoes',
+    policy: '/prestador/politica',
+    establishment: '/prestador/estabelecimento',
+    notifications: '/prestador/notificacoes',
+  },
+  admin: {
+    users: '/admin/usuarios',
+    notifications: '/admin/notificacoes',
+    appointments: '/admin/agendamentos',
+    appointment: (id: string) => `/admin/agendamentos/${id}`,
+    myNotifications: '/admin/minhas-notificacoes',
+  },
+} as const;
