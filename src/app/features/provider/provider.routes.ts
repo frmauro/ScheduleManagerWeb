@@ -1,11 +1,12 @@
 import type { Routes } from '@angular/router';
 import { providerHomeGuard } from '../../core/auth/provider-home.guard';
+import { APPOINTMENT_MESSAGES } from '../../core/i18n/appointments.messages';
 import { PROVIDER_MESSAGES } from '../../core/i18n/provider.messages';
 import { AREA_NOT_FOUND_ROUTE } from '../errors/area-fallback.routes';
 
 const T = PROVIDER_MESSAGES;
 
-/** Área do Prestador (`/prestador`, contracts/routes.md). A agenda real entra com a US5. */
+/** Área do Prestador (`/prestador`, contracts/routes.md). */
 export const PROVIDER_ROUTES: Routes = [
   { path: '', pathMatch: 'full', canActivate: [providerHomeGuard], children: [] },
   {
@@ -16,9 +17,16 @@ export const PROVIDER_ROUTES: Routes = [
   },
   {
     path: 'agenda',
-    title: T.agendaPlaceholder.pageTitle,
+    title: T.agenda.pageTitle,
+    loadComponent: () => import('./agenda/agenda.page').then((m) => m.AgendaPageComponent),
+  },
+  {
+    path: 'agendamentos/:id',
+    title: APPOINTMENT_MESSAGES.pageTitle,
     loadComponent: () =>
-      import('./agenda-placeholder.page').then((m) => m.AgendaPlaceholderPageComponent),
+      import('../appointments/appointment-detail.page').then(
+        (m) => m.AppointmentDetailPageComponent,
+      ),
   },
   {
     path: 'servicos',

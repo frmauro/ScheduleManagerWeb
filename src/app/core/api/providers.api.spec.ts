@@ -2,7 +2,12 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { firstValueFrom } from 'rxjs';
-import type { AvailabilityResponse, Page, ProviderSummary } from '../models/api-models';
+import type {
+  AppointmentSummary,
+  AvailabilityResponse,
+  Page,
+  ProviderSummary,
+} from '../models/api-models';
 import { ProvidersApi } from './providers.api';
 
 const PAGE: Page<ProviderSummary> = {
@@ -140,5 +145,90 @@ describe('ProvidersApi (operações #10–#12)', () => {
     expect(req.request.method).toBe('PUT');
     expect(req.request.body).toEqual(policy);
     req.flush(policy);
+  });
+});
+
+describe('ProvidersApi (operação #13 e calendário)', () => {
+  let api: ProvidersApi;
+  let httpMock: HttpTestingController;
+
+  const SUMMARY: AppointmentSummary = {
+    id: 'a1',
+    providerId: 'p1',
+    providerName: 'Barbearia',
+    customerId: 'c1',
+    customerName: 'Ana',
+    serviceName: 'Corte',
+    startAt: '2026-12-01T09:00:00-03:00',
+    endAt: '2026-12-01T09:30:00-03:00',
+    status: 'Pending',
+  };
+
+  function pageOf(page: number, totalPages: number, ids: string[]): Page<AppointmentSummary> {
+    return {
+      items: ids.map((id) => ({ ...SUMMARY, id })),
+      page,
+      pageSize: 100,
+      totalCount: ids.length,
+      totalPages,
+    };
+  }
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      providers: [provideHttpClient(), provideHttpClientTesting()],
+    });
+    api = TestBed.inject(ProvidersApi);
+    httpMock = TestBed.inject(HttpTestingController);
+  });
+
+  afterEach(() => httpMock.verify());
+
+  it('#13 GET /providers/me/appointments com status repetido, from/to com offset, serviceId e sort', () => {
+    void firstValueFrom(
+      api.listMyAppointments({
+        status: ['Pending', 'Confirmed'],
+        from: '2026-12-01T00:00:00+05:30',
+        to: '2026-12-08T00:00:00-03:00',
+        serviceId: 's1',
+        sort: '-startAt',
+        page: 2,
+        pageSize: 10,
+      }),
+    );
+    const req = httpMock.expectOne((r) => r.url === '/providers/me/appointments');
+    expect(req.request.method).toBe('GET');
+    expect(req.request.urlWithParams).toBe(
+      '/providers/me/appointments?page=2&pageSize=10&status=Pending&status=Confirmed' +
+        '&from=2026-12-01T00:00:00%2B05:30&to=2026-12-08T00:00:00-03:00&serviceId=s1&sort=-startAt',
+    );
+    req.flush(pageOf(2, 2, ['a1']));
+  });
+
+  it('listAllMyAppointmentsInRange segue totalPages com pageSize=100 e sort=startAt', async () => {
+    const promise = firstValueFrom(
+      api.listAllMyAppointmentsInRange('2026-12-01T00:00:00-03:00', '2026-12-08T00:00:00-03:00', {
+        status: ['Pending'],
+      }),
+    );
+    const first = httpMock.expectOne((r) => r.url === '/providers/me/appointments');
+    expect(first.request.params.get('pageSize')).toBe('100');
+    expect(first.request.params.get('sort')).toBe('startAt');
+    expect(first.request.params.get('page')).toBe('1');
+    expect(first.request.params.getAll('status')).toEqual(['Pending']);
+    first.flush(pageOf(1, 2, ['a1', 'a2']));
+    const second = httpMock.expectOne((r) => r.url === '/providers/me/appointments');
+    expect(second.request.params.get('page')).toBe('2');
+    expect(second.request.params.get('from')).toBe('2026-12-01T00:00:00-03:00');
+    second.flush(pageOf(2, 2, ['a3']));
+    expect((await promise).map((a) => a.id)).toEqual(['a1', 'a2', 'a3']);
+  });
+
+  it('listAllMyAppointmentsInRange com página única faz só uma chamada', async () => {
+    const promise = firstValueFrom(
+      api.listAllMyAppointmentsInRange('2026-12-01T00:00:00-03:00', '2026-12-02T00:00:00-03:00'),
+    );
+    httpMock.expectOne((r) => r.url === '/providers/me/appointments').flush(pageOf(1, 1, []));
+    expect(await promise).toEqual([]);
   });
 });

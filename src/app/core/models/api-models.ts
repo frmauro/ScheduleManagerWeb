@@ -3,6 +3,7 @@
  * Nenhum campo é definido aqui; se o contrato mudar, `npm run api:types` atualiza tudo.
  */
 import type { components } from '../api/schema.gen';
+import type { AppointmentStatus } from './enums';
 
 type Schemas = components['schemas'];
 
@@ -76,6 +77,15 @@ export type AdminCancelRequest = CancelRequest & {
 export type AppointmentSummary = Schemas['AppointmentSummary'];
 export type Appointment = Schemas['Appointment'];
 export type StatusChange = Schemas['StatusChange'];
+export type AppointmentSort = 'startAt' | '-startAt';
+/** Filtros comuns das listas de agendamentos (#7, #13): `status` repetido, `from`/`to` com offset. */
+export interface AppointmentListQuery extends PageQuery {
+  status?: readonly AppointmentStatus[];
+  from?: Instant;
+  /** Exclusivo; `to > from` e período máximo de 366 dias. */
+  to?: Instant;
+  sort?: AppointmentSort;
+}
 
 // Notificações e Admin
 export type Notification = Schemas['Notification'];

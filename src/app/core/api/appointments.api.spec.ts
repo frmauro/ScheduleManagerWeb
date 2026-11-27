@@ -125,3 +125,39 @@ describe('AppointmentsApi (operações #27 e #29)', () => {
     req.flush(APPOINTMENT);
   });
 });
+
+describe('AppointmentsApi (operações #28 e #30)', () => {
+  let api: AppointmentsApi;
+  let httpMock: HttpTestingController;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      providers: [provideHttpClient(), provideHttpClientTesting()],
+    });
+    api = TestBed.inject(AppointmentsApi);
+    httpMock = TestBed.inject(HttpTestingController);
+  });
+
+  afterEach(() => httpMock.verify());
+
+  it('#28 POST /appointments/{id}/confirm com If-Match; novo etag na resposta', async () => {
+    const promise = firstValueFrom(api.confirm('a1', 'W/"1"'));
+    const req = httpMock.expectOne('/appointments/a1/confirm');
+    expect(req.request.method).toBe('POST');
+    expect(req.request.headers.get('If-Match')).toBe('W/"1"');
+    req.flush(
+      { ...APPOINTMENT, status: 'Confirmed', version: '2' },
+      { headers: { ETag: 'W/"2"' } },
+    );
+    expect(await promise).toMatchObject({ etag: 'W/"2"', value: { status: 'Confirmed' } });
+  });
+
+  it('#30 POST /appointments/{id}/complete com If-Match; sem ETag usa a versão do corpo', async () => {
+    const promise = firstValueFrom(api.complete('a1', 'W/"2"'));
+    const req = httpMock.expectOne('/appointments/a1/complete');
+    expect(req.request.method).toBe('POST');
+    expect(req.request.headers.get('If-Match')).toBe('W/"2"');
+    req.flush({ ...APPOINTMENT, status: 'Completed', version: '3' });
+    expect(await promise).toMatchObject({ etag: 'W/"3"', value: { status: 'Completed' } });
+  });
+});
