@@ -17,6 +17,8 @@ import { SessionStore } from '../../core/auth/session.store';
 import { APP_PATHS } from '../../core/config/app-paths';
 import { MAX_PAGE_SIZE } from '../../core/config/app.constants';
 import { BOOKING_MESSAGES } from '../../core/i18n/booking.messages';
+import { CUSTOMER_MESSAGES } from '../../core/i18n/customer.messages';
+import { availableActions } from '../../core/domain/appointment-actions';
 import type {
   LocalDate,
   Page,
@@ -26,7 +28,9 @@ import type {
 } from '../../core/models/api-models';
 import { LOADING, toRemoteState, type RemoteState } from '../../shared/state/remote-state';
 import { localDateOf } from '../../shared/time/zoned-time';
+import { ButtonDirective } from '../../shared/ui/button.directive';
 import { EmptyStateComponent } from '../../shared/ui/empty-state.component';
+import { ErrorStateComponent } from '../../shared/ui/error-state.component';
 import { FormErrorSummaryComponent } from '../../shared/ui/form-error-summary.component';
 import { RemoteReadyDirective, RemoteViewComponent } from '../../shared/ui/remote-view.component';
 import { SkeletonComponent } from '../../shared/ui/skeleton.component';
@@ -53,7 +57,9 @@ type Step = 'choose' | 'review' | 'done';
     AvailabilityPickerComponent,
     BookingSuccessComponent,
     BookingSummaryComponent,
+    ButtonDirective,
     EmptyStateComponent,
+    ErrorStateComponent,
     FormErrorSummaryComponent,
     NotFoundPageComponent,
     RemoteReadyDirective,
@@ -73,7 +79,7 @@ type Step = 'choose' | 'review' | 'done';
           [queryParams]="{ servico: servico() ?? null, data: selectedDate() ?? null }"
           >← {{ text.backToProvider }}</a
         >
-        <h1 class="mt-4">{{ text.title }}</h1>
+        <h1 class="mt-4">{{ reagendar() ? rescheduleText.title : text.title }}</h1>
 
         <ol
           class="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm"
@@ -93,13 +99,57 @@ type Step = 'choose' | 'review' | 'done';
         <div class="mt-6">
           <sm-remote-view [state]="profile()" [skeletonRows]="4" (retry)="reload()">
             <ng-template [smRemoteReady]="profile()" let-provider>
-              @if (store.phase() === 'success' && store.result(); as result) {
+              @if (rescheduleBlock(); as block) {
+                @switch (block) {
+                  @case ('loading') {
+                    <sm-skeleton [rows]="3" />
+                  }
+                  @case ('error') {
+                    @if (store.rescheduleLoadError(); as error) {
+                      <sm-error-state [error]="error" [retryable]="false" />
+                    }
+                  }
+                  @case ('notAllowed') {
+                    <div class="sm-card flex flex-col gap-3" role="alert">
+                      <p>{{ rescheduleText.notReschedulable }}</p>
+                      <a smButton="secondary" [routerLink]="originalPath()">{{
+                        rescheduleText.backToAppointment
+                      }}</a>
+                    </div>
+                  }
+                  @case ('rejected') {
+                    <section
+                      class="sm-card flex flex-col gap-3 border-tone-danger-fg"
+                      role="alert"
+                      data-testid="reschedule-rejected"
+                    >
+                      <h2 class="text-lg">{{ rescheduleText.cancelRejectedTitle }}</h2>
+                      <p>{{ rescheduleText.cancelRejected }}</p>
+                      @if (store.errorMessage(); as message) {
+                        <p class="font-medium">{{ message }}</p>
+                      }
+                      <a smButton="secondary" [routerLink]="originalPath()">{{
+                        rescheduleText.backToAppointment
+                      }}</a>
+                    </section>
+                  }
+                }
+              } @else if (store.phase() === 'success' && store.result(); as result) {
                 <sm-booking-success [appointment]="result.appointment" />
               } @else if (services().status === 'loading') {
                 <sm-skeleton [rows]="3" />
               } @else if (selectedService(); as service) {
                 <div [hidden]="reviewing()">
                   <h2 class="text-lg">{{ text.chooseTitle(service.name) }}</h2>
+                  @if (store.reschedule()?.step === 'bookingFailedAfterCancel') {
+                    <p
+                      class="sm-card mt-3 border-tone-warning-fg font-medium"
+                      role="alert"
+                      data-testid="reschedule-failed-after-cancel"
+                    >
+                      {{ rescheduleText.bookingFailedAfterCancel }}
+                    </p>
+                  }
                   @if (store.phase() === 'choosing' && store.errorMessage(); as message) {
                     <div class="mt-3">
                       <sm-form-error-summary [messages]="[message]" title="" />
@@ -124,6 +174,10 @@ type Step = 'choose' | 'review' | 'done';
                     [initialNotes]="store.notes()"
                     [submitting]="store.submitting()"
                     [confirmDisabled]="!canBook()"
+                    [currentStartAt]="currentStartAt()"
+                    [initialReason]="store.reschedule()?.reason ?? ''"
+                    [submittingLabel]="submittingLabel()"
+                    (reasonChange)="store.setRescheduleReason($event)"
                     (notesChange)="store.setNotes($event)"
                     (confirm)="confirm()"
                     (changeSlot)="changeSlot()"
@@ -161,6 +215,8 @@ export class BookingPageComponent {
   readonly servico = input<string>();
   readonly data = input<string>();
   readonly horario = input<string>();
+  /** Reagendamento: id do agendamento atual (FR-035). */
+  readonly reagendar = input<string>();
 
   protected readonly store = inject(BookingStore);
   private readonly providersApi = inject(ProvidersApi);
@@ -172,6 +228,7 @@ export class BookingPageComponent {
   private readonly picker = viewChild(AvailabilityPickerComponent);
 
   protected readonly text = BOOKING_MESSAGES;
+  protected readonly rescheduleText = CUSTOMER_MESSAGES.reschedule;
   protected readonly steps: readonly { id: Step; label: string }[] = [
     { id: 'choose', label: BOOKING_MESSAGES.steps.choose },
     { id: 'review', label: BOOKING_MESSAGES.steps.review },
@@ -235,6 +292,57 @@ export class BookingPageComponent {
     this.store.phase() === 'success' ? 'done' : this.reviewing() ? 'review' : 'choose',
   );
 
+  /**
+   * Estados do reagendamento que substituem a escolha: carregando o atual, falha ao carregar,
+   * atual que não pode mais ser reagendado, ou cancelamento recusado (interrompe, FR-035a).
+   */
+  protected readonly rescheduleBlock = computed<
+    'loading' | 'error' | 'notAllowed' | 'rejected' | null
+  >(() => {
+    if (!this.reagendar()) {
+      return null;
+    }
+    const load = this.store.rescheduleLoad();
+    if (load === 'idle' || load === 'loading') {
+      return 'loading';
+    }
+    if (load === 'error') {
+      return 'error';
+    }
+    const flow = this.store.reschedule();
+    if (!flow) {
+      return 'loading';
+    }
+    if (flow.step === 'cancelRejected') {
+      return 'rejected';
+    }
+    if (
+      flow.step === 'idle' &&
+      !availableActions(flow.original, 'Customer').includes('reschedule')
+    ) {
+      return 'notAllowed';
+    }
+    return null;
+  });
+
+  protected readonly currentStartAt = computed(() => {
+    const flow = this.store.reschedule();
+    return flow && flow.step !== 'bookingFailedAfterCancel' ? flow.original.startAt : null;
+  });
+
+  protected readonly submittingLabel = computed(() => {
+    const step = this.store.reschedule()?.step;
+    return step === 'cancelling'
+      ? this.rescheduleText.cancelling
+      : step === 'booking'
+        ? this.rescheduleText.booking
+        : null;
+  });
+
+  protected readonly originalPath = computed(() =>
+    APP_PATHS.customer.appointment(this.reagendar() ?? ''),
+  );
+
   protected readonly isGuest = computed(() => !this.session.isAuthenticated());
   protected readonly canBook = computed(() => {
     const role = this.session.role();
@@ -242,6 +350,13 @@ export class BookingPageComponent {
   });
 
   constructor() {
+    effect(() => {
+      const id = this.reagendar();
+      if (id) {
+        untracked(() => this.store.loadReschedule(id));
+      }
+    });
+
     // URL com horário → abre o resumo dessa tentativa.
     effect(() => {
       const provider = this.readyProfile();

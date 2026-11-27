@@ -1,10 +1,16 @@
 import { computed, DestroyRef, inject, Injectable, signal } from '@angular/core';
 import type { Subscription } from 'rxjs';
 import { AppointmentsApi, type CreateAppointmentResult } from '../../core/api/appointments.api';
-import { STORAGE_KEYS } from '../../core/config/app.constants';
+import { RESCHEDULE_DEFAULT_REASON, STORAGE_KEYS } from '../../core/config/app.constants';
 import { ApiError, isApiError } from '../../core/errors/api-error';
 import { resolveErrorMessage } from '../../core/errors/error-messages';
-import type { Instant, LocalDate, Uuid } from '../../core/models/api-models';
+import type {
+  Appointment,
+  Instant,
+  LocalDate,
+  Uuid,
+  Versioned,
+} from '../../core/models/api-models';
 
 /** O que o cliente escolheu; o `startAt` é o do slot, opaco (FR-026). */
 export interface BookingSelection {
@@ -43,6 +49,26 @@ const RELOAD_SLOTS_CODES = [
 ] as const;
 
 const KEY_REUSED = 'idempotency.key_reused';
+
+/**
+ * Etapas do reagendamento (FR-035, FR-035a):
+ * - `idle`: escolhendo/revisando o novo horário; nada foi cancelado;
+ * - `cancelling` → `booking` → `done`;
+ * - `cancelRejected`: o cancelamento do atual foi recusado; nada foi reservado (interrompe);
+ * - `bookingFailedAfterCancel`: o atual já foi cancelado e a nova reserva falhou; a escolha de
+ *   horários continua aberta e o próximo envio só reserva.
+ */
+export type RescheduleStep =
+  'idle' | 'cancelling' | 'booking' | 'done' | 'cancelRejected' | 'bookingFailedAfterCancel';
+
+export interface RescheduleFlow {
+  readonly original: Appointment;
+  readonly originalEtag: string;
+  readonly reason: string;
+  readonly step: RescheduleStep;
+}
+
+export type RescheduleLoad = 'idle' | 'loading' | 'ready' | 'error';
 
 interface BookingDraft {
   readonly providerId: Uuid;
@@ -85,6 +111,9 @@ export class BookingStore {
   private readonly resultState = signal<CreateAppointmentResult | null>(null);
   private readonly errorState = signal<ApiError | null>(null);
   private readonly reloadsState = signal(0);
+  private readonly rescheduleState = signal<RescheduleFlow | null>(null);
+  private readonly rescheduleLoadState = signal<RescheduleLoad>('idle');
+  private readonly rescheduleLoadErrorState = signal<ApiError | null>(null);
 
   readonly phase = this.phaseState.asReadonly();
   readonly selection = this.selectionState.asReadonly();
@@ -99,6 +128,10 @@ export class BookingStore {
     return error ? resolveErrorMessage(error) : null;
   });
   readonly submitting = computed(() => this.phaseState() === 'submitting');
+  /** Reagendamento em andamento (`?reagendar=<id>`), ou `null` numa reserva comum. */
+  readonly reschedule = this.rescheduleState.asReadonly();
+  readonly rescheduleLoad = this.rescheduleLoadState.asReadonly();
+  readonly rescheduleLoadError = this.rescheduleLoadErrorState.asReadonly();
 
   constructor() {
     inject(DestroyRef).onDestroy(() => this.request?.unsubscribe());
@@ -141,15 +174,96 @@ export class BookingStore {
     this.syncKey();
   }
 
+  /** Carrega o agendamento original + `etag` para reagendar (FR-035). */
+  loadReschedule(appointmentId: Uuid): void {
+    const current = this.rescheduleState();
+    if (current?.original.id === appointmentId) {
+      return;
+    }
+    this.rescheduleLoadState.set('loading');
+    this.rescheduleLoadErrorState.set(null);
+    this.request?.unsubscribe();
+    this.request = this.api.get(appointmentId).subscribe({
+      next: (result) => this.startReschedule(result),
+      error: (error: unknown) => {
+        this.rescheduleLoadErrorState.set(
+          isApiError(error) ? error : new ApiError({ kind: 'unknown', status: 0 }),
+        );
+        this.rescheduleLoadState.set('error');
+      },
+    });
+  }
+
+  startReschedule(original: Versioned<Appointment>): void {
+    this.rescheduleState.set({
+      original: original.value,
+      originalEtag: original.etag,
+      reason: RESCHEDULE_DEFAULT_REASON,
+      step: 'idle',
+    });
+    this.rescheduleLoadState.set('ready');
+  }
+
+  setRescheduleReason(reason: string): void {
+    this.rescheduleState.update((flow) => (flow ? { ...flow, reason } : flow));
+  }
+
   submit(): void {
     const selection = this.selectionState();
     const phase = this.phaseState();
     if (!selection || (phase !== 'reviewing' && phase !== 'error')) {
       return;
     }
+    const flow = this.rescheduleState();
+    if (flow && (flow.step === 'idle' || flow.step === 'cancelling')) {
+      if (flow.step === 'idle') {
+        this.cancelOriginal(flow);
+      }
+      return;
+    }
+    if (flow && flow.step !== 'bookingFailedAfterCancel') {
+      return; // cancelRejected interrompe; booking/done já em andamento ou concluídos
+    }
+    this.create();
+  }
+
+  /** Primeiro passo do reagendamento: cancela o atual com `If-Match` e só então reserva. */
+  private cancelOriginal(flow: RescheduleFlow): void {
+    this.errorState.set(null);
+    this.phaseState.set('submitting');
+    this.setStep('cancelling');
+    this.request = this.api
+      .cancel(flow.original.id, flow.originalEtag, { reason: flow.reason.trim() })
+      .subscribe({
+        next: (cancelled) => {
+          this.rescheduleState.update((f) =>
+            f ? { ...f, original: cancelled.value, originalEtag: cancelled.etag } : f,
+          );
+          this.create();
+        },
+        error: (raw: unknown) => {
+          this.errorState.set(isApiError(raw) ? raw : new ApiError({ kind: 'unknown', status: 0 }));
+          this.setStep('cancelRejected');
+          this.phaseState.set('error');
+        },
+      });
+  }
+
+  private setStep(step: RescheduleStep): void {
+    this.rescheduleState.update((flow) => (flow ? { ...flow, step } : flow));
+  }
+
+  private create(): void {
+    const selection = this.selectionState();
+    if (!selection) {
+      return;
+    }
     const key = this.syncKey();
     this.errorState.set(null);
     this.phaseState.set('submitting');
+    if (this.rescheduleState()) {
+      this.setStep('booking');
+    }
     this.request = this.api
       .create(
         {
@@ -164,6 +278,9 @@ export class BookingStore {
         next: (result) => {
           this.resultState.set(result);
           this.phaseState.set('success');
+          if (this.rescheduleState()) {
+            this.setStep('done');
+          }
           this.clearDraft();
         },
         error: (error: unknown) => this.fail(error),
@@ -173,6 +290,18 @@ export class BookingStore {
   private fail(raw: unknown): void {
     const error = isApiError(raw) ? raw : new ApiError({ kind: 'unknown', status: 0 });
     this.errorState.set(error);
+    if (this.rescheduleState()) {
+      // O atual já foi cancelado: volta à escolha de horários para nova tentativa (FR-035a).
+      this.setStep('bookingFailedAfterCancel');
+      if (error.hasCode(KEY_REUSED)) {
+        this.regenerateKey();
+      }
+      if (error.hasCode(...RELOAD_SLOTS_CODES)) {
+        this.reloadsState.update((n) => n + 1);
+      }
+      this.phaseState.set('choosing');
+      return;
+    }
     if (error.hasCode(...BACK_TO_SLOTS_CODES)) {
       if (error.hasCode(...RELOAD_SLOTS_CODES)) {
         this.reloadsState.update((n) => n + 1);

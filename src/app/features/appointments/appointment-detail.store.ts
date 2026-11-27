@@ -1,6 +1,7 @@
 import { computed, DestroyRef, inject, Injectable, signal } from '@angular/core';
 import { catchError, finalize, tap, throwError, type Observable, type Subscription } from 'rxjs';
 import { AppointmentsApi } from '../../core/api/appointments.api';
+import { ProvidersApi } from '../../core/api/providers.api';
 import { SessionStore } from '../../core/auth/session.store';
 import { availableActions, type AppointmentAction } from '../../core/domain/appointment-actions';
 import { ApiError, isApiError } from '../../core/errors/api-error';
@@ -16,6 +17,11 @@ import type {
 } from '../../core/models/api-models';
 
 export type DetailStatus = 'loading' | 'ready' | 'error';
+
+export interface ProviderContacts {
+  readonly email?: string;
+  readonly phone: string;
+}
 
 /** Outra pessoa alterou o agendamento: avisa e recarrega (FR-048). */
 const CONFLICT_CODES = ['appointment.precondition_failed', 'appointment.concurrency_conflict'];
@@ -34,6 +40,7 @@ export class AppointmentDetailStore {
   private readonly api = inject(AppointmentsApi);
   private readonly session = inject(SessionStore);
   private readonly toast = inject(ToastService);
+  private readonly providers = inject(ProvidersApi);
 
   private readonly appointmentState = signal<Appointment | null>(null);
   private readonly etagState = signal<string | null>(null);
@@ -42,6 +49,7 @@ export class AppointmentDetailStore {
   private readonly pendingState = signal<AppointmentAction | null>(null);
   private readonly noticeState = signal<string | null>(null);
   private readonly now = signal(Date.now());
+  private readonly contactsState = signal<ProviderContacts | null>(null);
 
   readonly appointment = this.appointmentState.asReadonly();
   readonly etag = this.etagState.asReadonly();
@@ -50,6 +58,8 @@ export class AppointmentDetailStore {
   readonly pendingAction = this.pendingState.asReadonly();
   /** Mensagem da última ação recusada (catálogo por `code`). */
   readonly notice = this.noticeState.asReadonly();
+  /** Contatos do prestador, buscados quando o cancelamento cai na janela mínima (FR-034). */
+  readonly providerContacts = this.contactsState.asReadonly();
 
   readonly actions = computed<AppointmentAction[]>(() => {
     const appointment = this.appointmentState();
@@ -71,6 +81,7 @@ export class AppointmentDetailStore {
   load(id: Uuid): void {
     this.id = id;
     this.noticeState.set(null);
+    this.contactsState.set(null);
     this.fetch();
   }
 
@@ -98,6 +109,7 @@ export class AppointmentDetailStore {
       return throwError(() => new ApiError({ kind: 'unknown', status: 0 }));
     }
     this.noticeState.set(null);
+    this.contactsState.set(null);
     this.pendingState.set('cancel');
     return this.api.cancel(id, etag, body).pipe(
       tap((result) => this.applyAction('cancel', result)),
@@ -145,9 +157,23 @@ export class AppointmentDetailStore {
   private handleActionError(error: unknown): void {
     const apiError = isApiError(error) ? error : new ApiError({ kind: 'unknown', status: 0 });
     this.noticeState.set(resolveErrorMessage(apiError));
+    if (apiError.hasCode('appointment.cancellation_window')) {
+      this.loadProviderContacts();
+    }
     if (apiError.hasCode(...CONFLICT_CODES, ...STALE_CODES)) {
       this.reload();
     }
+  }
+
+  private loadProviderContacts(): void {
+    const providerId = this.appointmentState()?.provider.id;
+    if (!providerId || this.contactsState()) {
+      return;
+    }
+    this.providers.getPublic(providerId).subscribe({
+      next: (p) => this.contactsState.set({ email: p.contactEmail, phone: p.contactPhone }),
+      error: () => undefined, // sem contatos: a mensagem do catálogo continua valendo
+    });
   }
 
   private fetch(): void {

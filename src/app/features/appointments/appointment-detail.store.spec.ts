@@ -1,6 +1,7 @@
 import { TestBed } from '@angular/core/testing';
-import { Subject, type Observable } from 'rxjs';
+import { of, Subject, type Observable } from 'rxjs';
 import { AppointmentsApi } from '../../core/api/appointments.api';
+import { ProvidersApi } from '../../core/api/providers.api';
 import { SessionStore } from '../../core/auth/session.store';
 import type { Appointment, CancelRequest, Uuid, Versioned } from '../../core/models/api-models';
 import type { AppointmentStatus, Role } from '../../core/models/enums';
@@ -84,14 +85,27 @@ function reply(call: Call, value: Appointment): void {
   call.reply.complete();
 }
 
+class FakeProvidersApi {
+  readonly calls: string[] = [];
+  getPublic(id: string) {
+    this.calls.push(id);
+    return of({ contactEmail: 'contato@barbearia.com', contactPhone: '+5511999998888' });
+  }
+}
+
 function setup(role: Role = 'Provider') {
   const api = new FakeAppointmentsApi();
+  const providers = new FakeProvidersApi();
   TestBed.configureTestingModule({
-    providers: [AppointmentDetailStore, { provide: AppointmentsApi, useValue: api }],
+    providers: [
+      AppointmentDetailStore,
+      { provide: AppointmentsApi, useValue: api },
+      { provide: ProvidersApi, useValue: providers },
+    ],
   });
   TestBed.inject(SessionStore).start(authResponse(role));
   const store = TestBed.inject(AppointmentDetailStore);
-  return { api, store };
+  return { api, providers, store };
 }
 
 function loaded(role: Role = 'Provider', value = appointment()) {
@@ -207,5 +221,19 @@ describe('AppointmentDetailStore (FR-046..048)', () => {
   it('o Cliente vê cancelar e reagendar, nunca confirmar', () => {
     const { store } = loaded('Customer');
     expect(store.actions()).toEqual(['cancel', 'reschedule']);
+  });
+
+  it('Cliente: 422 cancellation_window mantém o agendamento e busca os contatos do prestador', () => {
+    const { api, providers, store } = loaded('Customer');
+    store.cancelRequest({ reason: 'Imprevisto' }).subscribe({ error: () => undefined });
+    api.last('cancel').reply.error(problem(422, 'appointment.cancellation_window'));
+    expect(store.notice()).toContain('antecedência mínima');
+    expect(store.appointment()?.status).toBe('Pending');
+    expect(api.count('get')).toBe(1);
+    expect(providers.calls).toEqual(['p1']);
+    expect(store.providerContacts()).toEqual({
+      email: 'contato@barbearia.com',
+      phone: '+5511999998888',
+    });
   });
 });
