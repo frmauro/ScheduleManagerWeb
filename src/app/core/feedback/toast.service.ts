@@ -1,4 +1,4 @@
-import { inject, Injectable, Injector, signal } from '@angular/core';
+import { DestroyRef, inject, Injectable, Injector, signal } from '@angular/core';
 
 export type ToastTone = 'info' | 'success' | 'error';
 
@@ -21,6 +21,11 @@ export class ToastService {
   private readonly injector = inject(Injector);
   private readonly items = signal<readonly Toast[]>([]);
   private nextId = 1;
+  private destroyed = false;
+
+  constructor() {
+    inject(DestroyRef).onDestroy(() => (this.destroyed = true));
+  }
 
   readonly toasts = this.items.asReadonly();
 
@@ -44,6 +49,9 @@ export class ToastService {
 
   private async announce(message: string, tone: ToastTone): Promise<void> {
     const { LiveAnnouncer } = await import('@angular/cdk/a11y');
+    if (this.destroyed) {
+      return; // a aplicação (ou o teste) terminou enquanto o módulo carregava
+    }
     await this.injector
       .get(LiveAnnouncer)
       .announce(message, tone === 'error' ? 'assertive' : 'polite');

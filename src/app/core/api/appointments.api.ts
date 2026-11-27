@@ -38,7 +38,7 @@ function isAdminCancel(body: CancelRequest | AdminCancelRequest): body is AdminC
   return 'onBehalfOf' in body;
 }
 
-/** Agendamentos: #26, #27 e #29 (contracts/api-services.md). As demais entram com US5–US8. */
+/** Agendamentos: #26–#30 (contracts/api-services.md). */
 @Injectable({ providedIn: 'root' })
 export class AppointmentsApi {
   private readonly http = inject(HttpClient);
@@ -78,6 +78,16 @@ export class AppointmentsApi {
       .pipe(map(toVersioned));
   }
 
+  /** #28 — Pending → Confirmed, com `If-Match`; devolve o novo `etag`. */
+  confirm(appointmentId: Uuid, etag: string): Observable<Versioned<Appointment>> {
+    return this.statusAction(API.appointments.confirm(appointmentId), etag);
+  }
+
+  /** #30 — Confirmed → Completed, só após o início (`422 appointment.not_started`). */
+  complete(appointmentId: Uuid, etag: string): Observable<Versioned<Appointment>> {
+    return this.statusAction(API.appointments.complete(appointmentId), etag);
+  }
+
   /**
    * #29 — cancela com `If-Match`. `onBehalfOf` só vai no corpo quando o chamador é o Admin
    * (`AdminCancelRequest`); Cliente e Prestador nunca o enviam.
@@ -95,6 +105,12 @@ export class AppointmentsApi {
         headers: { [IF_MATCH_HEADER]: etag },
         observe: 'response',
       })
+      .pipe(map(toVersioned));
+  }
+
+  private statusAction(url: string, etag: string): Observable<Versioned<Appointment>> {
+    return this.http
+      .post<Appointment>(url, null, { headers: { [IF_MATCH_HEADER]: etag }, observe: 'response' })
       .pipe(map(toVersioned));
   }
 }
