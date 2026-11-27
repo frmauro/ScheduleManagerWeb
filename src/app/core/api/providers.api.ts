@@ -3,11 +3,14 @@ import { inject, Injectable } from '@angular/core';
 import type { Observable } from 'rxjs';
 import type {
   AvailabilityResponse,
+  BookingPolicy,
   LocalDate,
   Page,
   PageQuery,
+  ProviderProfile,
   ProviderPublicProfile,
   ProviderSummary,
+  UpdateProviderRequest,
   Uuid,
 } from '../models/api-models';
 import type { ServiceCategory } from '../models/enums';
@@ -28,7 +31,10 @@ export interface AvailabilityQuery {
   readonly date: LocalDate;
 }
 
-/** Prestadores: operações #8, #9 e #25, públicas (contracts/api-services.md). */
+/**
+ * Prestadores: #8, #9 e #25 (públicas) e #10–#12 do próprio prestador
+ * (contracts/api-services.md).
+ */
 @Injectable({ providedIn: 'root' })
 export class ProvidersApi {
   private readonly http = inject(HttpClient);
@@ -50,6 +56,21 @@ export class ProvidersApi {
   /** #9 — `404 provider.not_found` para inexistente ou inativo. */
   getPublic(providerId: Uuid): Observable<ProviderPublicProfile> {
     return this.http.get<ProviderPublicProfile>(API.providers.byId(providerId));
+  }
+
+  /** #10 — perfil do prestador logado, com `bookingPolicy` e `isActive`. */
+  getMe(): Observable<ProviderProfile> {
+    return this.http.get<ProviderProfile>(API.providers.me);
+  }
+
+  /** #11 — substitui os dados do estabelecimento. */
+  updateMe(body: UpdateProviderRequest): Observable<ProviderProfile> {
+    return this.http.put<ProviderProfile>(API.providers.me, body);
+  }
+
+  /** #12 — política de reservas: todos os campos no corpo; vale só para novas reservas. */
+  updateBookingPolicy(body: BookingPolicy): Observable<BookingPolicy> {
+    return this.http.put<BookingPolicy>(API.providers.myBookingPolicy, body);
   }
 
   /**

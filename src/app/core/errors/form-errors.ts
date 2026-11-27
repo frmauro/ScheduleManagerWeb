@@ -1,4 +1,6 @@
 import type { AbstractControl } from '@angular/forms';
+import { ApiError, isApiError } from './api-error';
+import { ERROR_MESSAGES, isApiErrorCode, resolveErrorMessage } from './error-messages';
 
 /** Chave usada em `control.errors` para mensagens vindas do servidor. */
 export const SERVER_ERROR_KEY = 'server';
@@ -46,4 +48,37 @@ export function applyFieldError(form: AbstractControl, path: string, message: st
   }
   setServerError(control, message);
   return true;
+}
+
+/** Resultado de `handleFormError`: mensagens para o resumo e campos que receberam erro. */
+export interface FormErrorResult {
+  readonly summary: string[];
+  readonly fields: string[];
+}
+
+/**
+ * Tratamento padrão dos formulários (FR-006): `400 validation.failed` vai para os campos;
+ * códigos com campo próprio no catálogo (`presentation: 'field'`, ex.: `service.name_taken` →
+ * `name`) ou em `fieldByCode` vão para o campo; o resto vira mensagem no resumo.
+ */
+export function handleFormError(
+  form: AbstractControl,
+  error: unknown,
+  fieldByCode: Readonly<Record<string, string>> = {},
+): FormErrorResult {
+  const apiError = isApiError(error) ? error : new ApiError({ kind: 'unknown', status: 0 });
+  const validation = apiError.validationErrors;
+  if (validation) {
+    const summary = applyServerErrors(form, validation);
+    const fields = Object.keys(validation).filter((path) => form.get(path) !== null);
+    return { summary, fields };
+  }
+  const code = apiError.code;
+  const message = resolveErrorMessage(apiError);
+  const field =
+    (code && fieldByCode[code]) ?? (isApiErrorCode(code) ? ERROR_MESSAGES[code].field : undefined);
+  if (field && applyFieldError(form, field, message)) {
+    return { summary: [], fields: [field] };
+  }
+  return { summary: [message], fields: [] };
 }
