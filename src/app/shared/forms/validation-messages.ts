@@ -30,6 +30,9 @@ const MESSAGES: Record<string, MessageFn> = {
   phone: () => 'Informe um telefone válido com DDD.',
   postalCode: () => 'Informe um CEP com 8 dígitos.',
   dateInPast: () => 'Escolha uma data a partir de hoje.',
+  brlAmount: () => 'Informe um valor entre 0,00 e 99.999,99.',
+  timesPair: () => 'Informe as duas horas ou nenhuma.',
+  timesRequired: () => 'Informe a hora inicial e a final.',
 };
 
 /** Mensagens específicas por campo, que substituem o genérico "Formato inválido.". */

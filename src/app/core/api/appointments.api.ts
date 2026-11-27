@@ -1,11 +1,19 @@
-import { HttpClient, HttpStatusCode } from '@angular/common/http';
+import { HttpClient, HttpStatusCode, type HttpResponse } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
 import { map, type Observable } from 'rxjs';
-import type { Appointment, CreateAppointmentRequest, Uuid } from '../models/api-models';
+import type {
+  AdminCancelRequest,
+  Appointment,
+  CancelRequest,
+  CreateAppointmentRequest,
+  Uuid,
+  Versioned,
+} from '../models/api-models';
 import { ApiError } from '../errors/api-error';
 import { API } from './endpoints';
 
 export const IDEMPOTENCY_KEY_HEADER = 'Idempotency-Key';
+export const IF_MATCH_HEADER = 'If-Match';
 
 export interface CreateAppointmentResult {
   readonly appointment: Appointment;
@@ -13,7 +21,24 @@ export interface CreateAppointmentResult {
   readonly replayed: boolean;
 }
 
-/** Agendamentos: operação #26 (contracts/api-services.md). As demais entram com US4–US8. */
+function bodyOf<T>(response: HttpResponse<T>): T {
+  if (response.body === null) {
+    throw new ApiError({ kind: 'unknown', status: response.status });
+  }
+  return response.body;
+}
+
+/** `ETag` da resposta ou, na falta dele, `W/"{version}"` do corpo (concorrência otimista, R9). */
+function toVersioned(response: HttpResponse<Appointment>): Versioned<Appointment> {
+  const value = bodyOf(response);
+  return { value, etag: response.headers.get('ETag') ?? `W/"${value.version}"` };
+}
+
+function isAdminCancel(body: CancelRequest | AdminCancelRequest): body is AdminCancelRequest {
+  return 'onBehalfOf' in body;
+}
+
+/** Agendamentos: #26, #27 e #29 (contracts/api-services.md). As demais entram com US5–US8. */
 @Injectable({ providedIn: 'root' })
 export class AppointmentsApi {
   private readonly http = inject(HttpClient);
@@ -39,15 +64,37 @@ export class AppointmentsApi {
         observe: 'response',
       })
       .pipe(
-        map((response) => {
-          if (!response.body) {
-            throw new ApiError({ kind: 'unknown', status: response.status });
-          }
-          return {
-            appointment: response.body,
-            replayed: response.status === HttpStatusCode.Ok,
-          };
-        }),
+        map((response) => ({
+          appointment: bodyOf(response),
+          replayed: response.status === HttpStatusCode.Ok,
+        })),
       );
+  }
+
+  /** #27 — detalhe com o `etag` para as ações de status. */
+  get(appointmentId: Uuid): Observable<Versioned<Appointment>> {
+    return this.http
+      .get<Appointment>(API.appointments.byId(appointmentId), { observe: 'response' })
+      .pipe(map(toVersioned));
+  }
+
+  /**
+   * #29 — cancela com `If-Match`. `onBehalfOf` só vai no corpo quando o chamador é o Admin
+   * (`AdminCancelRequest`); Cliente e Prestador nunca o enviam.
+   */
+  cancel(
+    appointmentId: Uuid,
+    etag: string,
+    body: CancelRequest | AdminCancelRequest,
+  ): Observable<Versioned<Appointment>> {
+    const payload = isAdminCancel(body)
+      ? { reason: body.reason, onBehalfOf: body.onBehalfOf }
+      : { reason: body.reason };
+    return this.http
+      .post<Appointment>(API.appointments.cancel(appointmentId), payload, {
+        headers: { [IF_MATCH_HEADER]: etag },
+        observe: 'response',
+      })
+      .pipe(map(toVersioned));
   }
 }

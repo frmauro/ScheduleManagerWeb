@@ -43,10 +43,10 @@ test('cenário 17: 400 da API real aparece no campo CEP da etapa Endereço', asy
   await expect(page).toHaveURL(/\/cadastro\/prestador/);
 });
 
-test('cadastro de prestador completo leva à área do prestador', async ({ page }) => {
+test('cadastro de prestador completo leva aos primeiros passos (FR-037)', async ({ page }) => {
   await fillProviderWizard(page);
   await page.getByRole('button', { name: 'Concluir cadastro' }).click();
-  await expect(page).toHaveURL(/\/prestador$/);
+  await expect(page).toHaveURL(/\/prestador\/primeiros-passos$/);
 });
 
 for (const path of ['/entrar', '/cadastro', '/cadastro/prestador']) {

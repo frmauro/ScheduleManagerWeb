@@ -74,3 +74,54 @@ describe('AppointmentsApi (operação #26)', () => {
     expect(await promise).toEqual({ appointment: APPOINTMENT, replayed: true });
   });
 });
+
+describe('AppointmentsApi (operações #27 e #29)', () => {
+  let api: AppointmentsApi;
+  let httpMock: HttpTestingController;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      providers: [provideHttpClient(), provideHttpClientTesting()],
+    });
+    api = TestBed.inject(AppointmentsApi);
+    httpMock = TestBed.inject(HttpTestingController);
+  });
+
+  afterEach(() => httpMock.verify());
+
+  it('#27 GET /appointments/{id} usa o header ETag', async () => {
+    const promise = firstValueFrom(api.get('a1'));
+    const req = httpMock.expectOne('/appointments/a1');
+    expect(req.request.method).toBe('GET');
+    req.flush(APPOINTMENT, { headers: { ETag: 'W/"7"' } });
+    expect(await promise).toEqual({ value: APPOINTMENT, etag: 'W/"7"' });
+  });
+
+  it('#27 sem ETag, usa W/"{version}" do corpo', async () => {
+    const promise = firstValueFrom(api.get('a1'));
+    httpMock.expectOne('/appointments/a1').flush(APPOINTMENT);
+    expect((await promise).etag).toBe('W/"1"');
+  });
+
+  it('#29 POST /appointments/{id}/cancel com If-Match e só o motivo', async () => {
+    const promise = firstValueFrom(api.cancel('a1', 'W/"1"', { reason: 'Imprevisto' }));
+    const req = httpMock.expectOne('/appointments/a1/cancel');
+    expect(req.request.method).toBe('POST');
+    expect(req.request.headers.get('If-Match')).toBe('W/"1"');
+    expect(req.request.body).toEqual({ reason: 'Imprevisto' });
+    req.flush({ ...APPOINTMENT, status: 'CancelledByProvider', version: '2' });
+    expect(await promise).toMatchObject({
+      etag: 'W/"2"',
+      value: { status: 'CancelledByProvider' },
+    });
+  });
+
+  it('#29 o Admin envia onBehalfOf', () => {
+    void firstValueFrom(
+      api.cancel('a1', 'W/"1"', { reason: 'Pedido do cliente', onBehalfOf: 'Customer' }),
+    );
+    const req = httpMock.expectOne('/appointments/a1/cancel');
+    expect(req.request.body).toEqual({ reason: 'Pedido do cliente', onBehalfOf: 'Customer' });
+    req.flush(APPOINTMENT);
+  });
+});
