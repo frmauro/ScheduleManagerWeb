@@ -4,7 +4,13 @@ import { STORAGE_KEYS } from '../../core/config/app.constants';
 import { ApiError } from '../../core/errors/api-error';
 import { ERROR_MESSAGES } from '../../core/errors/error-messages';
 import { problem } from '../auth/auth-test-helpers';
-import { FakeAppointmentsApi, OTHER_START_AT, SELECTION, START_AT } from './booking-test-helpers';
+import {
+  appointment,
+  FakeAppointmentsApi,
+  OTHER_START_AT,
+  SELECTION,
+  START_AT,
+} from './booking-test-helpers';
 import { BookingStore } from './booking.store';
 
 function setup() {
@@ -164,5 +170,101 @@ describe('BookingStore (FR-026, FR-027, FR-030)', () => {
     const second = setup();
     second.store.review({ ...SELECTION, serviceId: 's2' });
     expect(second.store.notes()).toBe('');
+  });
+});
+
+describe('BookingStore — reagendamento (FR-035, FR-035a)', () => {
+  afterEach(() => sessionStorage.clear());
+
+  const ORIGINAL_START = '2026-11-30T15:00:00-04:00';
+
+  function original() {
+    return { ...appointment('Confirmed'), id: 'orig', startAt: ORIGINAL_START };
+  }
+
+  function rescheduling() {
+    const ctx = setup();
+    ctx.store.loadReschedule('orig');
+    const get = ctx.api.gets.at(-1);
+    get?.reply.next({ value: original(), etag: 'W/"3"' });
+    get?.reply.complete();
+    ctx.store.review(SELECTION);
+    return ctx;
+  }
+
+  function cancelled() {
+    return { ...original(), status: 'CancelledByCustomer' as const, version: '4' };
+  }
+
+  it('carrega o original + etag e pré-preenche o motivo (editável)', () => {
+    const { api, store } = rescheduling();
+    expect(api.gets.map((g) => g.id)).toEqual(['orig']);
+    expect(store.rescheduleLoad()).toBe('ready');
+    expect(store.reschedule()).toMatchObject({
+      originalEtag: 'W/"3"',
+      reason: 'Reagendamento solicitado pelo cliente',
+      step: 'idle',
+    });
+    store.setRescheduleReason('Mudou minha agenda');
+    expect(store.reschedule()?.reason).toBe('Mudou minha agenda');
+  });
+
+  it('confirma: cancela o atual com If-Match e só depois cria o novo', () => {
+    const { api, store } = rescheduling();
+    store.submit();
+    expect(api.log).toEqual(['cancel']);
+    expect(api.cancels[0]).toMatchObject({
+      id: 'orig',
+      etag: 'W/"3"',
+      body: { reason: 'Reagendamento solicitado pelo cliente' },
+    });
+    expect(store.reschedule()?.step).toBe('cancelling');
+
+    api.cancels[0]?.reply.next({ value: cancelled(), etag: 'W/"4"' });
+    api.cancels[0]?.reply.complete();
+    expect(api.log).toEqual(['cancel', 'create']);
+    expect(api.last().body.startAt).toBe(START_AT);
+    expect(store.reschedule()?.step).toBe('booking');
+
+    api.succeed('Pending');
+    expect(store.phase()).toBe('success');
+    expect(store.reschedule()?.step).toBe('done');
+  });
+
+  it('cancelamento recusado (cancellation_window) → cancelRejected, sem create', () => {
+    const { api, store } = rescheduling();
+    store.submit();
+    api.cancels[0]?.reply.error(problem(422, 'appointment.cancellation_window'));
+    expect(store.reschedule()?.step).toBe('cancelRejected');
+    expect(store.error()?.code).toBe('appointment.cancellation_window');
+    expect(api.calls).toHaveLength(0);
+
+    store.submit(); // interrompido: nenhum novo envio
+    expect(api.log).toEqual(['cancel']);
+  });
+
+  it('create falha após o cancelamento → bookingFailedAfterCancel e volta à escolha', () => {
+    const { api, store } = rescheduling();
+    store.submit();
+    api.cancels[0]?.reply.next({ value: cancelled(), etag: 'W/"4"' });
+    api.last().reply.error(problem(409, 'appointment.slot_unavailable'));
+    expect(store.reschedule()?.step).toBe('bookingFailedAfterCancel');
+    expect(store.phase()).toBe('choosing');
+    expect(store.slotsReloads()).toBe(1);
+
+    // Novo horário: só reserva, sem cancelar de novo.
+    store.review({ ...SELECTION, startAt: OTHER_START_AT });
+    store.submit();
+    expect(api.log).toEqual(['cancel', 'create', 'create']);
+    api.succeed('Confirmed');
+    expect(store.reschedule()?.step).toBe('done');
+  });
+
+  it('falha ao carregar o original → rescheduleLoad error', () => {
+    const { api, store } = setup();
+    store.loadReschedule('orig');
+    api.gets[0]?.reply.error(problem(404, 'appointment.not_found'));
+    expect(store.rescheduleLoad()).toBe('error');
+    expect(store.rescheduleLoadError()?.code).toBe('appointment.not_found');
   });
 });

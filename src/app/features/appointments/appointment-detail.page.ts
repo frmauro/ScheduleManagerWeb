@@ -13,6 +13,7 @@ import { SessionStore } from '../../core/auth/session.store';
 import { APP_PATHS } from '../../core/config/app-paths';
 import { DialogService } from '../../core/feedback/dialog.service';
 import { APPOINTMENT_MESSAGES } from '../../core/i18n/appointments.messages';
+import { CUSTOMER_MESSAGES } from '../../core/i18n/customer.messages';
 import type { Role } from '../../core/models/enums';
 import { InZonePipe } from '../../shared/time/in-zone.pipe';
 import { ButtonDirective } from '../../shared/ui/button.directive';
@@ -52,7 +53,7 @@ const BACK_PATHS: Record<Role, string> = {
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <section class="mx-auto max-w-3xl px-4 py-8">
-      <a class="sm-link text-sm" [routerLink]="backPath()">← {{ text.back }}</a>
+      <a class="sm-link text-sm" [routerLink]="backPath()">← {{ backLabel() }}</a>
       <h1 class="mt-2">{{ text.title }}</h1>
 
       @switch (store.status()) {
@@ -82,9 +83,25 @@ const BACK_PATHS: Record<Role, string> = {
               </div>
 
               @if (store.notice(); as notice) {
-                <p class="sm-card border-tone-warning-fg" role="alert" data-testid="action-notice">
-                  {{ notice }}
-                </p>
+                <div
+                  class="sm-card border-tone-warning-fg"
+                  role="alert"
+                  data-testid="action-notice"
+                >
+                  <p>{{ notice }}</p>
+                  @if (store.providerContacts(); as contacts) {
+                    <p class="mt-2 text-sm" data-testid="provider-contacts">
+                      {{ customerText.cancellationWindowContacts }}
+                      <a class="sm-link" [href]="'tel:' + contacts.phone">{{ contacts.phone }}</a>
+                      @if (contacts.email) {
+                        ·
+                        <a class="sm-link" [href]="'mailto:' + contacts.email">{{
+                          contacts.email
+                        }}</a>
+                      }
+                    </p>
+                  }
+                </div>
               }
 
               @if (store.actions().length > 0 || showCompleteHint()) {
@@ -116,6 +133,14 @@ const BACK_PATHS: Record<Role, string> = {
                         >
                           {{ text.actions.complete }}
                         </button>
+                      }
+                      @case ('reschedule') {
+                        <a
+                          smButton="secondary"
+                          [routerLink]="bookingPath(a.provider.id)"
+                          [queryParams]="{ servico: a.service.id, reagendar: a.id }"
+                          >{{ text.actions.reschedule }}</a
+                        >
                       }
                       @case ('cancel') {
                         <button
@@ -194,7 +219,17 @@ const BACK_PATHS: Record<Role, string> = {
                 </div>
                 <div class="sm-card">
                   <dt class="font-semibold">{{ text.sections.provider }}</dt>
-                  <dd class="mt-1">{{ a.provider.displayName }}</dd>
+                  <dd class="mt-1">
+                    <p>{{ a.provider.displayName }}</p>
+                    @if (role() === 'Customer') {
+                      <a
+                        class="sm-link text-sm"
+                        [routerLink]="myAppointmentsPath"
+                        [queryParams]="{ prestador: a.provider.id }"
+                        >{{ customerText.seeAllWithProvider }}</a
+                      >
+                    }
+                  </dd>
                 </div>
                 @if (a.notes) {
                   <div class="sm-card sm:col-span-2">
@@ -232,11 +267,14 @@ export class AppointmentDetailPageComponent {
   private readonly dialogs = inject(DialogService);
 
   protected readonly text = APPOINTMENT_MESSAGES;
+  protected readonly customerText = CUSTOMER_MESSAGES.detail;
+  protected readonly myAppointmentsPath = APP_PATHS.customer.appointments;
   protected readonly role = this.session.role;
   protected readonly backPath = computed(() => {
     const role = this.role();
     return role ? BACK_PATHS[role] : APP_PATHS.home;
   });
+  protected readonly backLabel = computed(() => this.text.back[this.role() ?? 'Customer']);
   protected readonly busy = computed(() => this.store.pendingAction() !== null);
 
   /** "Concluir" ainda indisponível: Confirmado e antes do início (para quem pode concluir). */
@@ -255,6 +293,10 @@ export class AppointmentDetailPageComponent {
       const id = this.id();
       untracked(() => this.store.load(id));
     });
+  }
+
+  protected bookingPath(providerId: string): string {
+    return APP_PATHS.booking(providerId);
   }
 
   protected cancel(): void {

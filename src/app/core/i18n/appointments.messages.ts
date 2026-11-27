@@ -2,7 +2,11 @@
 export const APPOINTMENT_MESSAGES = {
   pageTitle: 'Agendamento · ScheduleManager',
   title: 'Agendamento',
-  back: 'Voltar à agenda',
+  back: {
+    Provider: 'Voltar à agenda',
+    Customer: 'Voltar aos meus agendamentos',
+    Admin: 'Voltar à busca de agendamentos',
+  },
   notFound: 'Agendamento não encontrado.',
   sections: {
     when: 'Data e horário',

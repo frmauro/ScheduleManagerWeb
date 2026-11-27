@@ -1,6 +1,11 @@
 import { Subject } from 'rxjs';
 import type { CreateAppointmentResult } from '../../core/api/appointments.api';
-import type { Appointment, CreateAppointmentRequest } from '../../core/models/api-models';
+import type {
+  Appointment,
+  CancelRequest,
+  CreateAppointmentRequest,
+  Versioned,
+} from '../../core/models/api-models';
 import type { AppointmentStatus } from '../../core/models/enums';
 
 /** Fixtures compartilhadas pelos testes da reserva (US3). */
@@ -37,13 +42,38 @@ export interface CreateCall {
   readonly reply: Subject<CreateAppointmentResult>;
 }
 
+export interface CancelCall {
+  readonly id: string;
+  readonly etag: string;
+  readonly body: CancelRequest;
+  readonly reply: Subject<Versioned<Appointment>>;
+}
+
 /** `AppointmentsApi` falso: cada chamada fica pendente até o teste responder. */
 export class FakeAppointmentsApi {
   readonly calls: CreateCall[] = [];
+  readonly cancels: CancelCall[] = [];
+  readonly gets: { id: string; reply: Subject<Versioned<Appointment>> }[] = [];
+  /** Ordem das operações, para verificar "cancela antes de criar". */
+  readonly log: string[] = [];
+
+  get(id: string): Subject<Versioned<Appointment>> {
+    const reply = new Subject<Versioned<Appointment>>();
+    this.gets.push({ id, reply });
+    return reply;
+  }
+
+  cancel(id: string, etag: string, body: CancelRequest): Subject<Versioned<Appointment>> {
+    const reply = new Subject<Versioned<Appointment>>();
+    this.cancels.push({ id, etag, body, reply });
+    this.log.push('cancel');
+    return reply;
+  }
 
   create(body: CreateAppointmentRequest, key: string): Subject<CreateAppointmentResult> {
     const reply = new Subject<CreateAppointmentResult>();
     this.calls.push({ body, key, reply });
+    this.log.push('create');
     return reply;
   }
 
