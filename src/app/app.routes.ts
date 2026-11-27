@@ -3,6 +3,7 @@ import { authGuard } from './core/auth/auth.guard';
 import { roleGuard } from './core/auth/role.guard';
 import { guestGuard } from './core/auth/guest.guard';
 import { AUTH_MESSAGES } from './core/i18n/auth.messages';
+import { BOOKING_MESSAGES } from './core/i18n/booking.messages';
 import { CATALOG_MESSAGES } from './core/i18n/catalog.messages';
 
 /**
@@ -16,6 +17,13 @@ export const routes: Routes = [
     title: CATALOG_MESSAGES.search.pageTitle,
     loadComponent: () =>
       import('./features/catalog/provider-search.page').then((m) => m.ProviderSearchPageComponent),
+  },
+  {
+    // Pública: o visitante vê o resumo e só entra ao confirmar (FR-028).
+    path: 'prestadores/:providerId/agendar',
+    title: BOOKING_MESSAGES.pageTitle,
+    loadComponent: () =>
+      import('./features/booking/booking.page').then((m) => m.BookingPageComponent),
   },
   {
     path: 'prestadores/:providerId',
