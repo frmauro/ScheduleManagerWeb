@@ -1,6 +1,8 @@
 import type { Routes } from '@angular/router';
 import { authGuard } from './core/auth/auth.guard';
 import { roleGuard } from './core/auth/role.guard';
+import { guestGuard } from './core/auth/guest.guard';
+import { AUTH_MESSAGES } from './core/i18n/auth.messages';
 import { CATALOG_MESSAGES } from './core/i18n/catalog.messages';
 
 /**
@@ -22,6 +24,27 @@ export const routes: Routes = [
       import('./features/catalog/provider-profile.page').then(
         (m) => m.ProviderProfilePageComponent,
       ),
+  },
+  {
+    path: 'entrar',
+    title: AUTH_MESSAGES.login.pageTitle,
+    canActivate: [guestGuard],
+    loadComponent: () => import('./features/auth/login.page').then((m) => m.LoginPageComponent),
+  },
+  {
+    path: 'cadastro',
+    pathMatch: 'full',
+    title: AUTH_MESSAGES.registerCustomer.pageTitle,
+    canActivate: [guestGuard],
+    loadComponent: () =>
+      import('./features/auth/register-customer.page').then((m) => m.RegisterCustomerPageComponent),
+  },
+  {
+    path: 'cadastro/prestador',
+    title: AUTH_MESSAGES.registerProvider.pageTitle,
+    canActivate: [guestGuard],
+    loadComponent: () =>
+      import('./features/auth/register-provider.page').then((m) => m.RegisterProviderPageComponent),
   },
   {
     path: 'cliente',
