@@ -1,12 +1,28 @@
 import type { Routes } from '@angular/router';
 import { authGuard } from './core/auth/auth.guard';
 import { roleGuard } from './core/auth/role.guard';
+import { CATALOG_MESSAGES } from './core/i18n/catalog.messages';
 
 /**
  * Rotas da aplicação (contracts/routes.md). Cada área é carregada sob demanda e protegida por
  * sessão + perfil. As telas de cada história entram nos arquivos de rotas das áreas.
  */
 export const routes: Routes = [
+  {
+    path: '',
+    pathMatch: 'full',
+    title: CATALOG_MESSAGES.search.pageTitle,
+    loadComponent: () =>
+      import('./features/catalog/provider-search.page').then((m) => m.ProviderSearchPageComponent),
+  },
+  {
+    path: 'prestadores/:providerId',
+    title: CATALOG_MESSAGES.profile.pageTitle,
+    loadComponent: () =>
+      import('./features/catalog/provider-profile.page').then(
+        (m) => m.ProviderProfilePageComponent,
+      ),
+  },
   {
     path: 'cliente',
     canActivate: [authGuard, roleGuard('Customer')],
